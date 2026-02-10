@@ -7,7 +7,8 @@ import networkx as nx
 from tabulate import tabulate
 
 
-def generate_summary_report(trends, emerging, centrality, cluster_results, conn, output_dir):
+def generate_summary_report(trends, emerging, centrality, cluster_results, conn, output_dir,
+                             ideas=None):
     """Generate a summary Markdown report combining all analysis results.
 
     Args:
@@ -17,6 +18,7 @@ def generate_summary_report(trends, emerging, centrality, cluster_results, conn,
         cluster_results: List of cluster dicts from cluster_blogs.
         conn: sqlite3.Connection instance.
         output_dir: Directory to write the report file.
+        ideas: Optional list of idea dicts from generate_ideas.
 
     Returns:
         Path to the generated summary.md file.
@@ -89,6 +91,29 @@ def generate_summary_report(trends, emerging, centrality, cluster_results, conn,
         ))
     else:
         lines.append("No cluster data available.")
+    lines.append("")
+
+    # Top project ideas
+    lines.append("## Top Project Ideas\n")
+    if ideas:
+        top_ideas = ideas[:10]
+        table_data = [
+            [
+                i["idea_id"] + 1,
+                i["label"].title(),
+                f"{i['impact_score']:.2f}",
+                i["blog_count"],
+                i["signal_count"],
+            ]
+            for i in top_ideas
+        ]
+        lines.append(tabulate(
+            table_data,
+            headers=["Rank", "Idea", "Impact", "Blogs", "Signals"],
+            tablefmt="github",
+        ))
+    else:
+        lines.append("No project ideas detected.")
     lines.append("")
 
     path = os.path.join(output_dir, "summary.md")
@@ -305,8 +330,88 @@ def generate_cluster_report(cluster_results, similarity_matrix, blog_names, outp
     return md_path, json_path
 
 
+def generate_ideas_report(ideas, output_dir):
+    """Generate project ideas report in Markdown and JSON.
+
+    Args:
+        ideas: List of idea dicts from generate_ideas / cluster_signals.
+        output_dir: Directory to write report files.
+
+    Returns:
+        Tuple of (md_path, json_path) for the generated files.
+    """
+    os.makedirs(output_dir, exist_ok=True)
+
+    lines = []
+    lines.append("# Project Ideas Report\n")
+
+    if not ideas:
+        lines.append("No project ideas detected.")
+        lines.append("")
+    else:
+        for idea in ideas:
+            rank = idea["idea_id"] + 1
+            lines.append(
+                f"## {rank}. {idea['label'].title()}"
+            )
+            lines.append(
+                f"**Impact Score**: {idea['impact_score']:.2f} "
+                f"| **Blogs**: {idea['blog_count']} "
+                f"| **Signals**: {idea['signal_count']}"
+            )
+            lines.append("")
+
+            # Justification
+            if idea.get("justification"):
+                lines.append("### Justification\n")
+                lines.append(idea["justification"])
+                lines.append("")
+
+            # Sources table
+            sources = idea.get("sources", [])
+            if sources:
+                lines.append("### Sources\n")
+                table_data = [
+                    [
+                        f"[{s['blog_name']}]({s['post_url']})",
+                        s["post_title"],
+                        s["published"][:10] if s["published"] else "N/A",
+                        s["signal_type"],
+                    ]
+                    for s in sources
+                ]
+                lines.append(tabulate(
+                    table_data,
+                    headers=["Blog", "Post", "Date", "Pain Type"],
+                    tablefmt="github",
+                ))
+                lines.append("")
+
+            # Key quotes
+            quotes = [s for s in sources if s.get("signal_text")][:3]
+            if quotes:
+                lines.append("### Key Quotes\n")
+                for q in quotes:
+                    lines.append(f"> \"{q['signal_text']}\" — **{q['blog_name']}**\n")
+                lines.append("")
+
+            lines.append("---\n")
+
+    md_path = os.path.join(output_dir, "ideas.md")
+    with open(md_path, "w", encoding="utf-8") as f:
+        f.write("\n".join(lines))
+
+    json_data = {"ideas": ideas}
+    json_path = os.path.join(output_dir, "ideas.json")
+    with open(json_path, "w", encoding="utf-8") as f:
+        json.dump(json_data, f, indent=2)
+
+    return md_path, json_path
+
+
 def generate_all_reports(trends, emerging, centrality, graph, cluster_results,
-                         similarity_matrix, blog_names, conn, output_dir):
+                         similarity_matrix, blog_names, conn, output_dir,
+                         ideas=None):
     """Generate all reports at once.
 
     Args:
@@ -319,6 +424,7 @@ def generate_all_reports(trends, emerging, centrality, graph, cluster_results,
         blog_names: List of blog name strings.
         conn: sqlite3.Connection instance.
         output_dir: Directory to write report files.
+        ideas: Optional list of idea dicts from generate_ideas.
 
     Returns:
         List of file paths created.
@@ -326,7 +432,8 @@ def generate_all_reports(trends, emerging, centrality, graph, cluster_results,
     paths = []
 
     summary_path = generate_summary_report(
-        trends, emerging, centrality, cluster_results, conn, output_dir
+        trends, emerging, centrality, cluster_results, conn, output_dir,
+        ideas=ideas,
     )
     paths.append(summary_path)
 
@@ -340,5 +447,9 @@ def generate_all_reports(trends, emerging, centrality, graph, cluster_results,
         cluster_results, similarity_matrix, blog_names, output_dir
     )
     paths.extend([cluster_md, cluster_json])
+
+    if ideas is not None:
+        ideas_md, ideas_json = generate_ideas_report(ideas, output_dir)
+        paths.extend([ideas_md, ideas_json])
 
     return paths

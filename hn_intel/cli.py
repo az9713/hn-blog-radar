@@ -99,6 +99,52 @@ def analyze(max_features, n_clusters, period):
 
 
 @main.command()
+@click.option("--max-features", default=500, type=int, help="Max TF-IDF features.")
+@click.option("--top-n", default=20, type=int, help="Number of ideas to surface.")
+@click.option("--period", default="month", type=click.Choice(["month", "week"]), help="Trend period.")
+@click.option("--output-dir", default=None, type=str, help="Optional directory to write report files.")
+def ideas(max_features, top_n, period, output_dir):
+    """Surface high-impact project ideas from blog pain signals."""
+    from hn_intel.ideas import generate_ideas
+
+    conn = get_connection()
+    init_db(conn)
+
+    click.echo("Surfacing project ideas...")
+    idea_list = generate_ideas(conn, max_features=max_features, period=period, top_n=top_n)
+
+    if not idea_list:
+        click.echo("No project ideas found. Try fetching more posts first.")
+        conn.close()
+        return
+
+    click.echo(f"Found {len(idea_list)} project ideas:\n")
+    for idea in idea_list:
+        rank = idea["idea_id"] + 1
+        click.echo(f"  {rank}. {idea['label'].title()}")
+        click.echo(f"     Impact: {idea['impact_score']:.2f} | "
+                    f"Blogs: {idea['blog_count']} | "
+                    f"Signals: {idea['signal_count']}")
+        if idea.get("representative_quote"):
+            quote = idea["representative_quote"][:100]
+            click.echo(f"     \"{quote}...\"")
+        # Show source blogs
+        blog_names = list(dict.fromkeys(s["blog_name"] for s in idea["sources"]))
+        click.echo(f"     Sources: {', '.join(blog_names[:5])}")
+        click.echo("")
+
+    if output_dir:
+        from hn_intel.reports import generate_ideas_report
+
+        md_path, json_path = generate_ideas_report(idea_list, output_dir)
+        click.echo(f"Reports written to {output_dir}/:")
+        click.echo(f"  {md_path}")
+        click.echo(f"  {json_path}")
+
+    conn.close()
+
+
+@main.command()
 @click.option("--output-dir", default="output", help="Directory for report files.")
 @click.option("--max-features", default=500, type=int, help="Max TF-IDF features.")
 @click.option("--n-clusters", default=8, type=int, help="Number of blog clusters.")
@@ -108,6 +154,7 @@ def report(output_dir, max_features, n_clusters, period):
     from hn_intel.analyzer import compute_trends, detect_emerging_topics
     from hn_intel.network import extract_citations, build_citation_graph, compute_centrality
     from hn_intel.clusters import compute_blog_vectors, cluster_blogs, compute_similarity_matrix
+    from hn_intel.ideas import generate_ideas
     from hn_intel.reports import generate_all_reports
 
     conn = get_connection()
@@ -125,6 +172,9 @@ def report(output_dir, max_features, n_clusters, period):
     clusters = cluster_blogs(blog_vectors, blog_names, vectorizer, n_clusters=n_clusters)
     sim_matrix = compute_similarity_matrix(blog_vectors)
 
+    click.echo("Surfacing project ideas...")
+    idea_list = generate_ideas(conn, max_features=max_features, period=period)
+
     click.echo("Generating reports...")
     paths = generate_all_reports(
         trends=trends,
@@ -136,6 +186,7 @@ def report(output_dir, max_features, n_clusters, period):
         blog_names=blog_names,
         conn=conn,
         output_dir=output_dir,
+        ideas=idea_list,
     )
 
     conn.close()
