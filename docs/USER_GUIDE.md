@@ -613,12 +613,12 @@ This takes **30-60 seconds**.
 Surfacing project ideas...
 Found 15 project ideas:
 
-  1. Wasm, Tools, Developer, Debugging, Profiling
+  1. Better Wasm Debugging Tools
      Impact: 0.72 | Blogs: 4 | Signals: 7
      "I wish there was a decent WASM profiler that actually works..."
      Sources: simonwillison.net, xeiaso.net, fasterthanli.me, matklad.github.io
 
-  2. Api, Testing, Documentation, Workflow
+  2. Improved Api Testing Documentation
      Impact: 0.65 | Blogs: 3 | Signals: 5
      "It's frustratingly hard to test APIs when documentation is outdated..."
      Sources: blog.codinghorror.com, antirez.com, lucumr.pocoo.org
@@ -634,7 +634,7 @@ Found 15 project ideas:
 - **Sources:** The blogs that contributed to this idea.
 
 **What just happened?**
-The tool used regular expressions to find pain-point phrases (e.g., "I wish", "hard to", "no good tool for"), then used TF-IDF and agglomerative clustering to group related complaints into coherent project ideas. Each idea is ranked by how well it aligns with emerging trends and influential blogs.
+The tool used regular expressions to find pain-point phrases (e.g., 'I wish', 'hard to', 'no good tool for'), deduplicated signals per post, then used TF-IDF (with pain-trigger stop words filtered out) and agglomerative clustering to group related signals into coherent project ideas. Each idea gets a template-based label (e.g. 'Better Wasm Debugging Tools', 'Simplified Database Migration') derived from the dominant pain type and top domain keywords. Ideas are ranked by how well they align with emerging trends and influential blogs.
 
 **Save results to files:**
 ```bash
@@ -777,7 +777,7 @@ When you run `hn-intel report`, you get 9 files. Here's what each one contains.
 ```markdown
 |   Rank | Idea                               |   Impact |   Blogs |   Signals |
 |--------|------------------------------------|----------|---------|-----------|
-|      1 | Wasm, Tools, Developer, Debugging  |     0.72 |       4 |         7 |
+|      1 | Better Wasm Debugging Tools        |     0.72 |       4 |         7 |
 ```
 
 **What it tells you:** The highest-impact project opportunities based on pain signals from blog content. Higher impact = stronger signal combining trends, authority, breadth, and recency.
@@ -949,12 +949,12 @@ Machine-readable data:
 
 **Markdown (.md) version:**
 ```markdown
-## 1. Wasm, Tools, Developer, Debugging, Profiling
+## 1. Better Wasm Debugging Tools
 **Impact Score**: 0.72 | **Blogs**: 4 | **Signals**: 7
 
 ### Justification
 
-4 blogs independently describe this pain point, including simonwillison.net,
+4 blogs independently describe this need, including simonwillison.net,
 xeiaso.net, fasterthanli.me. Pain signals span 3 frustration, 2 gap, 2 wish
 categories. Related emerging keywords: wasm, tools, debugging. High composite
 impact score suggests strong unmet demand.
@@ -977,7 +977,7 @@ impact score suggests strong unmet demand.
   "ideas": [
     {
       "idea_id": 0,
-      "label": "wasm, tools, developer, debugging, profiling",
+      "label": "Better Wasm Debugging Tools",
       "impact_score": 0.72,
       "justification": "4 blogs independently describe this pain point...",
       "keywords": ["wasm", "tools", "developer"],
@@ -998,6 +998,14 @@ impact score suggests strong unmet demand.
 - **Authority (25%)**: Is the source blog influential (high PageRank)?
 - **Breadth (25%)**: How many distinct blogs express this pain?
 - **Recency (15%)**: How recently was this pain expressed?
+
+**Idea labels:** Instead of raw keywords, each idea gets a descriptive label based on the dominant pain type:
+- **Wish** pain → "Better ..." (e.g., "Better Log Correlation")
+- **Frustration** pain → "Improved ..." (e.g., "Improved CI Pipeline")
+- **Gap** pain → "... Solution" (e.g., "Observability Solution")
+- **Difficulty** pain → "Simplified ..." (e.g., "Simplified Database Migration")
+- **Broken** pain → "Reliable ..." (e.g., "Reliable DNS Resolution")
+- **Opportunity** pain → "... Platform" (e.g., "Edge Runtime Platform")
 
 **Pain types:** The tool detects six categories:
 - **Wish**: "I wish there was...", "someone should build..."

@@ -15,6 +15,8 @@ from hn_intel.ideas import (
     build_justification,
     cluster_signals,
     generate_ideas,
+    _generate_label,
+    _PAIN_STOP_WORDS,
 )
 from hn_intel.reports import generate_ideas_report
 from hn_intel.cli import main
@@ -332,12 +334,14 @@ def test_justification_content():
     assert "Alpha Blog" in justification
     # Should mention pain type breakdown
     assert "gap" in justification
-    # Should mention keywords
+    # Should mention keywords (now "Related trending topics")
     assert "observability" in justification
     # Should mention blog count
     assert "5 blogs" in justification
     # Should have an impact statement
     assert "impact" in justification.lower()
+    # Should use "need" instead of "pain point"
+    assert "pain point" not in justification
 
 
 def test_justification_single_blog():
@@ -485,7 +489,7 @@ def test_ideas_report_creates_files():
 def test_ideas_report_content():
     ideas = [{
         "idea_id": 0,
-        "label": "observability gap",
+        "label": "Logging Monitoring Solution",
         "impact_score": 0.72,
         "justification": "3 blogs raise this. Related: logging, monitoring.",
         "keywords": ["logging", "monitoring"],
@@ -512,7 +516,7 @@ def test_ideas_report_content():
         with open(md_path, encoding="utf-8") as f:
             md = f.read()
         assert "Project Ideas Report" in md
-        assert "Observability Gap" in md
+        assert "Logging Monitoring Solution" in md
         assert "Alpha Blog" in md
         assert "Beta Blog" in md
         assert "Justification" in md
@@ -523,7 +527,7 @@ def test_ideas_report_content():
             data = json.load(f)
         assert "ideas" in data
         assert len(data["ideas"]) == 1
-        assert data["ideas"][0]["label"] == "observability gap"
+        assert data["ideas"][0]["label"] == "Logging Monitoring Solution"
         assert len(data["ideas"][0]["sources"]) == 2
 
 
@@ -534,6 +538,112 @@ def test_ideas_report_empty():
         with open(md_path, encoding="utf-8") as f:
             content = f.read()
         assert "No project ideas detected" in content
+
+
+# ── Label generation tests ──
+
+
+def test_generate_label_with_keywords():
+    keywords = ["database", "migration", "schema"]
+    breakdown = {"difficulty": 5, "wish": 2}
+    label = _generate_label(keywords, breakdown)
+    assert label == "Simplified Database Migration Schema"
+
+
+def test_generate_label_templates():
+    """Each pain type should use its own template."""
+    keywords = ["dns", "resolution"]
+    assert _generate_label(keywords, {"broken": 3}) == "Reliable Dns Resolution"
+    assert _generate_label(keywords, {"wish": 3}) == "Better Dns Resolution"
+    assert _generate_label(keywords, {"gap": 3}) == "Dns Resolution Solution"
+    assert _generate_label(keywords, {"opportunity": 3}) == "Dns Resolution Platform"
+
+
+def test_generate_label_no_keywords():
+    label = _generate_label([], {"wish": 1})
+    assert label == "General Improvement"
+
+
+# ── Pain stop words tests ──
+
+
+def test_pain_stop_words_excluded_from_keywords():
+    """Pain-trigger words should not appear in TF-IDF keywords."""
+    conn = _mem_db()
+    _seed_pain_posts(conn)
+    signals = extract_pain_signals(conn)
+    vectorizer, matrix = extract_signal_keywords(signals)
+
+    if vectorizer is not None:
+        feature_names = set(vectorizer.get_feature_names_out())
+        for stop_word in _PAIN_STOP_WORDS:
+            assert stop_word not in feature_names, f"Pain stop word '{stop_word}' found in TF-IDF features"
+    conn.close()
+
+
+# ── Deduplication tests ──
+
+
+def test_extract_pain_signals_deduplicates_same_post_type():
+    """Same post + signal_type should produce only one signal."""
+    conn = _mem_db()
+    ids = _seed_blogs(conn)
+
+    # Post with two wish-pattern matches
+    insert_post(conn, ids["Alpha Blog"], {
+        "title": "Multi-wish post",
+        "description": "<p>I wish someone would build a better debugger. "
+                       "I also wish there was a better profiler for production.</p>",
+        "url": "https://alpha.com/multi-wish",
+        "published": "2024-06-01",
+        "author": "Alice",
+    })
+
+    signals = extract_pain_signals(conn)
+    wish_signals = [s for s in signals if s["signal_type"] == "wish"
+                    and s["post_url"] == "https://alpha.com/multi-wish"]
+    assert len(wish_signals) == 1, f"Expected 1 wish signal, got {len(wish_signals)}"
+    conn.close()
+
+
+def test_dedup_keeps_longest_match():
+    """Deduplication should keep the longest signal text."""
+    conn = _mem_db()
+    ids = _seed_blogs(conn)
+
+    insert_post(conn, ids["Alpha Blog"], {
+        "title": "Short and long wish",
+        "description": "<p>I wish someone would build X. "
+                       "I also wish there was a much better and more comprehensive tool for handling Y in production environments.</p>",
+        "url": "https://alpha.com/long-wish",
+        "published": "2024-06-01",
+        "author": "Alice",
+    })
+
+    signals = extract_pain_signals(conn)
+    wish_signals = [s for s in signals if s["signal_type"] == "wish"
+                    and s["post_url"] == "https://alpha.com/long-wish"]
+    assert len(wish_signals) == 1
+    # The kept signal should be the longer one
+    assert len(wish_signals[0]["signal_text"]) > 30
+    conn.close()
+
+
+def test_dedup_allows_different_types_same_post():
+    """Same post can have signals of different types."""
+    conn = _mem_db()
+    _seed_pain_posts(conn)
+    signals = extract_pain_signals(conn)
+
+    # The multi-signal post has both wish and gap signals
+    multi_signals = [s for s in signals if s["post_url"] == "https://alpha.com/multi-signal"]
+    types = {s["signal_type"] for s in multi_signals}
+    assert len(types) >= 2, f"Expected multiple signal types, got {types}"
+    # But each type should appear at most once
+    for t in types:
+        count = sum(1 for s in multi_signals if s["signal_type"] == t)
+        assert count == 1, f"Signal type '{t}' appeared {count} times for same post"
+    conn.close()
 
 
 # ── CLI tests ──

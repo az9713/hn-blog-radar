@@ -100,7 +100,7 @@ def generate_summary_report(trends, emerging, centrality, cluster_results, conn,
         table_data = [
             [
                 i["idea_id"] + 1,
-                i["label"].title(),
+                i["label"],
                 f"{i['impact_score']:.2f}",
                 i["blog_count"],
                 i["signal_count"],
@@ -352,7 +352,7 @@ def generate_ideas_report(ideas, output_dir):
         for idea in ideas:
             rank = idea["idea_id"] + 1
             lines.append(
-                f"## {rank}. {idea['label'].title()}"
+                f"## {rank}. {idea['label']}"
             )
             lines.append(
                 f"**Impact Score**: {idea['impact_score']:.2f} "

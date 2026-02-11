@@ -12,6 +12,35 @@ from sklearn.metrics.pairwise import cosine_similarity
 
 from hn_intel.db import get_all_posts
 
+# ── Pain-trigger stop words (excluded from TF-IDF to keep labels meaningful) ─
+
+_PAIN_STOP_WORDS = [
+    "wish", "would", "nice", "someone", "should", "hope", "really", "need",
+    "frustrat", "frustrating", "frustrated", "annoy", "annoying", "annoyed",
+    "pain", "point", "drives", "crazy", "maddening",
+    "good", "way", "tool", "solution", "missing", "lacking", "gap",
+    "underserved", "easy", "reliable", "decent", "still", "exist", "unmet",
+    "hard", "difficult", "impossible", "struggle", "struggling", "complicated",
+    "complex", "long", "painful",
+    "broken", "work", "unreliable", "flaky", "buggy", "unusable", "failing", "fragile",
+    "opportunity", "untapped", "demand", "ripe", "disruption", "market", "room", "space", "begging",
+    "people", "things", "just", "like", "think", "know", "want", "make", "going",
+    "don", "doesn", "didn", "isn", "wasn", "aren", "won", "can",
+    "lot", "much", "many", "even", "also", "actually", "right", "new", "old",
+    "try", "tried", "trying", "able", "said", "says", "kind", "sort",
+]
+
+# ── Label templates by dominant pain type ────────────────────────────────────
+
+_LABEL_TEMPLATES = {
+    "wish":        "Better {}",
+    "frustration": "Improved {}",
+    "gap":         "{} Solution",
+    "difficulty":  "Simplified {}",
+    "broken":      "Reliable {}",
+    "opportunity": "{} Platform",
+}
+
 # ── Pain-signal patterns ────────────────────────────────────────────────────
 
 _PAIN_PATTERNS = {
@@ -97,6 +126,8 @@ def extract_pain_signals(conn):
     """
     posts = get_all_posts(conn)
     signals = []
+    # Track (post_url, signal_type) → longest signal_text to deduplicate
+    seen = {}
 
     for post in posts:
         title = post["title"] or ""
@@ -109,7 +140,14 @@ def extract_pain_signals(conn):
                 if len(sentence) < 10:
                     continue
 
-                signals.append({
+                key = (post["url"], signal_type)
+                if key in seen:
+                    # Keep the longest match per post+type
+                    if len(sentence) > len(seen[key]["signal_text"]):
+                        seen[key]["signal_text"] = sentence
+                    continue
+
+                signal = {
                     "post_id": post["id"],
                     "blog_id": post["blog_id"],
                     "blog_name": post["blog_name"],
@@ -118,7 +156,9 @@ def extract_pain_signals(conn):
                     "published": post["published"] or "",
                     "signal_text": sentence,
                     "signal_type": signal_type,
-                })
+                }
+                seen[key] = signal
+                signals.append(signal)
 
     return signals
 
@@ -140,9 +180,13 @@ def extract_signal_keywords(signals, max_features=200):
     documents = [s["signal_text"] for s in signals]
     min_df = min(2, len(documents))
 
+    # Combine sklearn's English stop words with pain-trigger vocabulary
+    from sklearn.feature_extraction.text import ENGLISH_STOP_WORDS
+    combined_stop_words = list(ENGLISH_STOP_WORDS) + _PAIN_STOP_WORDS
+
     vectorizer = TfidfVectorizer(
         max_features=max_features,
-        stop_words="english",
+        stop_words=combined_stop_words,
         min_df=min_df,
         max_df=0.8,
         ngram_range=(1, 2),
@@ -258,7 +302,7 @@ def build_justification(idea):
     if blog_count >= 3:
         names_str = ", ".join(unique_names[:3])
         parts.append(
-            f"{blog_count} blogs independently describe this pain point, "
+            f"{blog_count} blogs independently describe this need, "
             f"including {names_str}."
         )
     elif blog_count > 0:
@@ -282,15 +326,15 @@ def build_justification(idea):
     keywords = idea.get("keywords", [])
     if keywords:
         parts.append(
-            f"Related emerging keywords: {', '.join(keywords[:5])}."
+            f"Related trending topics: {', '.join(keywords[:5])}."
         )
 
     # Impact score summary
     score = idea.get("impact_score", 0)
     if score >= 0.7:
-        parts.append("High composite impact score suggests strong unmet demand.")
+        parts.append("High impact score suggests strong demand for a solution.")
     elif score >= 0.4:
-        parts.append("Moderate composite impact score indicates a viable opportunity.")
+        parts.append("Moderate impact score indicates a viable project opportunity.")
 
     return " ".join(parts) if parts else "Potential opportunity identified from blog content."
 
@@ -379,6 +423,28 @@ def cluster_signals(signals, vectorizer, matrix, similarity_threshold=0.3):
     return ideas
 
 
+def _generate_label(keywords, pain_type_breakdown):
+    """Generate a human-readable label from keywords and dominant pain type.
+
+    Args:
+        keywords: List of top TF-IDF keywords for this cluster.
+        pain_type_breakdown: Dict of {pain_type: count}.
+
+    Returns:
+        A template-based label like "Simplified Database Migration".
+    """
+    if not keywords:
+        return "General Improvement"
+
+    # Pick the dominant pain type
+    dominant = max(pain_type_breakdown, key=pain_type_breakdown.get) if pain_type_breakdown else "wish"
+    template = _LABEL_TEMPLATES.get(dominant, "Better {}")
+
+    # Use up to 3 keywords, title-cased
+    topic = " ".join(kw.title() for kw in keywords[:3])
+    return template.format(topic)
+
+
 def _make_idea(idea_id, members, feature_names, indices, matrix=None):
     """Build a single idea dict from a cluster of signals."""
     # Determine top keywords from the cluster centroid
@@ -417,7 +483,7 @@ def _make_idea(idea_id, members, feature_names, indices, matrix=None):
         for m in sorted_members
     ]
 
-    label = ", ".join(keywords[:5]) if keywords else "general"
+    label = _generate_label(keywords, dict(pain_types))
     agg_score = max((m.get("impact_score", 0) for m in members), default=0)
 
     return {

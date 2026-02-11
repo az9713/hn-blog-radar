@@ -29,7 +29,7 @@ The tool also scans blog post content for URLs that link to other blogs in the d
 Finally, the tool uses K-means clustering (an unsupervised machine learning algorithm) to group similar blogs together. It converts each blog into a high-dimensional vector based on its vocabulary, then finds natural groupings. For example, it might discover that blogs about Linux systems administration cluster together, separate from blogs about web development. It also computes cosine similarity scores between every pair of blogs to quantify how similar their content is.
 
 **Step 5: Project Ideas from Pain Signals**
-The tool mines blog content for pain-point language — wishes ("I wish there was..."), frustrations ("drives me crazy"), gaps ("no good tool for..."), difficulties ("hard to..."), broken experiences ("constantly breaks"), and opportunities ("ripe for disruption"). It extracts these pain signals, cross-references them with emerging trends and blog authority (PageRank), clusters related signals into coherent project idea themes using agglomerative clustering, and ranks each idea by a composite impact score (trend momentum, authority, breadth across blogs, and recency). Each idea includes full source attribution back to the original blog posts and a written justification.
+The tool mines blog content for pain-point language — wishes ("I wish there was..."), frustrations ("drives me crazy"), gaps ("no good tool for..."), difficulties ("hard to..."), broken experiences ("constantly breaks"), and opportunities ("ripe for disruption"). It deduplicates and extracts these pain signals, cross-references them with emerging trends and blog authority (PageRank), filters out pain-trigger vocabulary from the TF-IDF analysis, clusters related signals into coherent project idea themes using agglomerative clustering, and generates template-based labels (e.g. 'Simplified Database Migration') for each idea. Ideas are ranked by a composite impact score (trend momentum, authority, breadth across blogs, and recency). Each idea includes full source attribution back to the original blog posts and a written justification.
 
 **Output**
 All analysis results are saved as human-readable Markdown reports and machine-readable JSON files. You get trend reports, network graphs, cluster assignments, similarity matrices, and project idea reports with ranked opportunities.
@@ -73,7 +73,7 @@ hn_popular_blogs_bestpartnerstv/
 │   ├── ideas.md                   # Ranked project ideas with justifications and sources
 │   └── ideas.json                 # Machine-readable project idea data
 │
-├── tests/                         # Test suite (97 passing tests)
+├── tests/                         # Test suite (104 passing tests)
 │   ├── __init__.py                # Test package initializer
 │   ├── test_analyzer.py           # Tests for TF-IDF and trend detection
 │   ├── test_clusters.py           # Tests for clustering algorithms
@@ -509,9 +509,9 @@ Machine-readable JSON containing:
   "ideas": [
     {
       "idea_id": 0,
-      "label": "keyword1, keyword2, keyword3",
+      "label": "Better Keyword1 Keyword2 Keyword3",
       "impact_score": 0.72,
-      "justification": "3 blogs independently describe this pain point...",
+      "justification": "3 blogs independently describe this need...",
       "keywords": ["keyword1", "keyword2"],
       "signal_count": 5,
       "blog_count": 3,
@@ -529,7 +529,7 @@ Machine-readable JSON containing:
 
 ## Running Tests
 
-The project includes a comprehensive test suite with 97 tests across 8 test files.
+The project includes a comprehensive test suite with 104 tests across 8 test files.
 
 **Run all tests:**
 ```bash
@@ -548,7 +548,7 @@ tests/test_analyzer.py::test_detect_emerging_topics PASSED
 tests/test_clusters.py::test_compute_blog_vectors PASSED
 tests/test_clusters.py::test_cluster_blogs PASSED
 ...
-========== 97 passed in 3.12s ==========
+========== 104 passed in 9.55s ==========
 ```
 
 ### Test Coverage
@@ -559,7 +559,7 @@ tests/test_clusters.py::test_cluster_blogs PASSED
 | `test_clusters.py` | 10 | K-means clustering, similarity matrices, cluster labeling |
 | `test_db.py` | 8 | Database schema, blog/post insertion, uniqueness constraints |
 | `test_fetcher.py` | 15 | RSS parsing, feed fetching, error handling, deduplication |
-| `test_ideas.py` | 24 | Pain signal extraction, scoring, clustering, idea generation, CLI integration |
+| `test_ideas.py` | 31 | Pain signal extraction, scoring, clustering, idea generation, CLI integration |
 | `test_network.py` | 11 | URL extraction, citation graphs, PageRank computation |
 | `test_opml_parser.py` | 9 | OPML parsing, feed URL extraction, malformed input handling |
 | `test_reports.py` | 8 | Report generation, file I/O, Markdown/JSON formatting |
@@ -651,7 +651,7 @@ Extracts URLs from post content, identifies citations to other blogs in the data
 Converts blogs to TF-IDF vectors (based on all their posts), applies K-means clustering algorithm (scikit-learn), computes cosine similarity between all blog pairs, generates cluster labels from top keywords.
 
 **ideas.py**
-Mines blog content for pain-point language (wishes, frustrations, gaps, difficulties, broken experiences, opportunities) using regex patterns. Extracts pain signals, scores them using a composite of trend momentum, blog authority (PageRank), breadth across blogs, and recency. Clusters related signals into coherent project idea themes using agglomerative clustering on TF-IDF vectors. Generates written justifications for each idea with full source attribution.
+Mines blog content for pain-point language (wishes, frustrations, gaps, difficulties, broken experiences, opportunities) using regex patterns. Deduplicates signals per post+type, keeping the longest match. Scores signals using a composite of trend momentum, blog authority (PageRank), breadth across blogs, and recency. Uses TF-IDF with custom pain-trigger stop words (70+ terms) to extract meaningful domain keywords. Clusters related signals into coherent project idea themes using agglomerative clustering. Generates template-based labels (e.g. 'Simplified Database Migration', 'Reliable DNS Resolution') from the dominant pain type and top domain keywords. Includes written justifications for each idea with full source attribution.
 
 **reports.py**
 Takes analysis results and generates formatted Markdown and JSON files. Uses tabulate for table formatting. Writes to output directory. Includes project ideas reports (ideas.md, ideas.json).

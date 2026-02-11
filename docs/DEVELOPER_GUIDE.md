@@ -1034,6 +1034,83 @@ Each pattern matches common English phrases that indicate an unmet need or frust
 
 ---
 
+#### Pain-Trigger Stop Words
+
+When extracting TF-IDF keywords from pain signals, raw pain-trigger vocabulary (words like "wish", "frustrating", "broken", "opportunity") would pollute the keyword lists and labels. To prevent this, `ideas.py` maintains a `_PAIN_STOP_WORDS` list of 70+ terms that are combined with sklearn's built-in English stop words before TF-IDF vectorization.
+
+```python
+_PAIN_STOP_WORDS = [
+    "wish", "would", "nice", "someone", "should", "hope", "really", "need",
+    "frustrat", "frustrating", "frustrated", "annoy", "annoying", "annoyed",
+    "pain", "point", "drives", "crazy", "maddening",
+    # ... 70+ words covering all six pain categories plus common filler words
+]
+```
+
+**Why needed?** Without these stop words, idea labels would contain words like "Wish, People, Understand" instead of meaningful domain terms like "Database Migration" or "DNS Resolution".
+
+**How it works**: In `extract_signal_keywords()`, the vectorizer combines sklearn's `ENGLISH_STOP_WORDS` with `_PAIN_STOP_WORDS`:
+
+```python
+from sklearn.feature_extraction.text import ENGLISH_STOP_WORDS
+combined_stop_words = list(ENGLISH_STOP_WORDS) + _PAIN_STOP_WORDS
+
+vectorizer = TfidfVectorizer(
+    stop_words=combined_stop_words,
+    # ... other params
+)
+```
+
+---
+
+#### Signal Deduplication
+
+A single blog post can match the same pain pattern multiple times (e.g., two separate sentences both matching "wish"). Without deduplication, the same post would appear multiple times in a single idea's source list.
+
+`extract_pain_signals()` deduplicates by `(post_url, signal_type)` — each post contributes at most one signal per pain type. When multiple matches occur, the longest signal text is kept (it provides the most context).
+
+```python
+key = (post["url"], signal_type)
+if key in seen:
+    # Keep the longest match per post+type
+    if len(sentence) > len(seen[key]["signal_text"]):
+        seen[key]["signal_text"] = sentence
+    continue
+```
+
+**Important**: Different signal types from the same post are preserved. A post expressing both a "wish" and a "gap" produces two signals.
+
+---
+
+#### Template-Based Label Generation
+
+Instead of joining raw TF-IDF keywords (which produced meaningless labels like "Wish, People, Understand"), labels are generated using `_generate_label()` which combines the dominant pain type with domain keywords via templates:
+
+```python
+_LABEL_TEMPLATES = {
+    "wish":        "Better {}",
+    "frustration": "Improved {}",
+    "gap":         "{} Solution",
+    "difficulty":  "Simplified {}",
+    "broken":      "Reliable {}",
+    "opportunity": "{} Platform",
+}
+```
+
+**Algorithm**:
+1. Determine the dominant pain type from `pain_type_breakdown` (the type with the highest count)
+2. Take the top 3 TF-IDF keywords (already filtered by pain stop words), title-case them
+3. Apply the template: e.g., if dominant type is "difficulty" and keywords are ["database", "migration", "schema"], the label becomes "Simplified Database Migration Schema"
+4. Fallback: if no keywords survive filtering, use "General Improvement"
+
+**Example outputs**:
+- "Simplified Database Migration" (difficulty + database keywords)
+- "Reliable DNS Resolution" (broken + DNS keywords)
+- "Better Log Correlation" (wish + logging keywords)
+- "Improved CI Pipeline" (frustration + CI keywords)
+
+---
+
 #### Composite Impact Scoring
 
 Each pain signal is scored on four dimensions:
@@ -1081,6 +1158,8 @@ clustering = AgglomerativeClustering(
 | `build_justification(idea)` | Written explanation | Multi-sentence string |
 | `cluster_signals(signals, vectorizer, matrix)` | Group into ideas | List of idea dicts |
 | `generate_ideas(conn, ...)` | Full pipeline | List of ranked idea dicts |
+| `_generate_label(keywords, breakdown)` | Template-based label from pain type + keywords | Formatted string (e.g. "Simplified Database Migration") |
+| `_PAIN_STOP_WORDS` | Pain-trigger vocabulary excluded from TF-IDF | List of 70+ stop word strings |
 
 ---
 
