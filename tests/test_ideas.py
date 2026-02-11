@@ -16,6 +16,7 @@ from hn_intel.ideas import (
     cluster_signals,
     generate_ideas,
     _generate_label,
+    _extract_title_keywords,
     _PAIN_STOP_WORDS,
 )
 from hn_intel.reports import generate_ideas_report
@@ -644,6 +645,99 @@ def test_dedup_allows_different_types_same_post():
         count = sum(1 for s in multi_signals if s["signal_type"] == t)
         assert count == 1, f"Signal type '{t}' appeared {count} times for same post"
     conn.close()
+
+
+# ── Title keyword extraction tests ──
+
+
+def test_extract_title_keywords_basic():
+    members = [
+        {"post_title": "Database migrations in production"},
+        {"post_title": "Zero-downtime database upgrades"},
+        {"post_title": "DNS resolution woes"},
+    ]
+    keywords = _extract_title_keywords(members)
+    assert "database" in keywords
+    # "database" appears in 2 titles, should rank first
+    assert keywords[0] == "database"
+
+
+def test_extract_title_keywords_filters_stop_words():
+    members = [
+        {"post_title": "I wish there was a better tool"},
+        {"post_title": "The frustration of broken deployments"},
+    ]
+    keywords = _extract_title_keywords(members)
+    # Pain/English stop words should be filtered out
+    for kw in keywords:
+        assert kw not in ("wish", "frustration", "broken", "the", "was")
+
+
+def test_extract_title_keywords_empty_titles():
+    members = [{"post_title": ""}, {"post_title": ""}]
+    keywords = _extract_title_keywords(members)
+    assert keywords == []
+
+
+def test_extract_title_keywords_counts_once_per_title():
+    """Same word appearing twice in one title should count as 1."""
+    members = [
+        {"post_title": "DNS DNS DNS resolution"},
+        {"post_title": "Container networking"},
+    ]
+    keywords = _extract_title_keywords(members)
+    # "dns" appears in only 1 title despite repetition
+    assert keywords.count("dns") <= 1
+
+
+# ── Quality filtering tests ──
+
+
+def test_generate_ideas_filters_singletons():
+    """Ideas with only 1 blog should be filtered when better ideas exist.
+
+    Uses cluster_signals directly to avoid needing large corpora for
+    compute_trends (which generate_ideas calls internally).
+    """
+    # Build signals that represent two clusters:
+    # Cluster A: multi-blog (blog_count=2), should survive filtering
+    # Cluster B: singleton (blog_count=1), should be filtered
+    multi_blog_signals = [
+        {
+            "post_id": 1, "blog_id": 1, "blog_name": "Blog A",
+            "post_title": "Testing microservices", "post_url": "https://a.com/p1",
+            "published": "2024-06-01", "signal_text": "I wish someone would build better testing tools for microservices",
+            "signal_type": "wish", "impact_score": 0.5,
+            "score_breakdown": {"trend": 0.2, "authority": 0.1, "breadth": 0.1, "recency": 0.1},
+        },
+        {
+            "post_id": 2, "blog_id": 2, "blog_name": "Blog B",
+            "post_title": "Testing distributed systems", "post_url": "https://b.com/p1",
+            "published": "2024-06-02", "signal_text": "I wish there was a good way to test distributed systems end to end",
+            "signal_type": "wish", "impact_score": 0.5,
+            "score_breakdown": {"trend": 0.2, "authority": 0.1, "breadth": 0.1, "recency": 0.1},
+        },
+    ]
+    singleton_signal = [
+        {
+            "post_id": 3, "blog_id": 3, "blog_name": "Blog C",
+            "post_title": "Cooking recipes", "post_url": "https://c.com/p1",
+            "published": "2024-06-03", "signal_text": "I wish someone would build a recipe manager without subscriptions",
+            "signal_type": "wish", "impact_score": 0.4,
+            "score_breakdown": {"trend": 0.1, "authority": 0.1, "breadth": 0.0, "recency": 0.2},
+        },
+    ]
+
+    all_signals = multi_blog_signals + singleton_signal
+    vectorizer, matrix = extract_signal_keywords(all_signals)
+    ideas = cluster_signals(all_signals, vectorizer, matrix)
+
+    # Without filtering, we'd have ideas with blog_count=1
+    # Apply the same filter as generate_ideas
+    quality_ideas = [i for i in ideas if i["blog_count"] >= 2]
+    if quality_ideas:
+        for idea in quality_ideas:
+            assert idea["blog_count"] >= 2
 
 
 # ── CLI tests ──

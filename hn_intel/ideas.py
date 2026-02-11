@@ -16,7 +16,7 @@ from hn_intel.db import get_all_posts
 
 _PAIN_STOP_WORDS = [
     "wish", "would", "nice", "someone", "should", "hope", "really", "need",
-    "frustrat", "frustrating", "frustrated", "annoy", "annoying", "annoyed",
+    "frustrat", "frustrating", "frustrated", "frustration", "annoy", "annoying", "annoyed",
     "pain", "point", "drives", "crazy", "maddening",
     "good", "way", "tool", "solution", "missing", "lacking", "gap",
     "underserved", "easy", "reliable", "decent", "still", "exist", "unmet",
@@ -28,6 +28,28 @@ _PAIN_STOP_WORDS = [
     "don", "doesn", "didn", "isn", "wasn", "aren", "won", "can",
     "lot", "much", "many", "even", "also", "actually", "right", "new", "old",
     "try", "tried", "trying", "able", "said", "says", "kind", "sort",
+    "got", "gets", "makes", "making", "getting", "having",
+    "experience", "thoughts", "state", "future", "woes",
+    "problems", "issues", "troubles", "challenges",
+    "does", "did", "doing", "done", "goes", "went", "going",
+    "take", "took", "taking", "taken", "give", "gave", "given",
+    "find", "finding", "found", "read", "reading", "write", "writing",
+    "come", "came", "coming", "look", "looking", "looked",
+    "see", "seeing", "seen", "tell", "telling", "told",
+    "become", "became", "means", "put", "bring", "brought",
+    "change", "changes", "changing", "update", "updates",
+    "inside", "outside", "around", "across", "between",
+    "pretty", "quite", "rather", "enough", "almost",
+    "certain", "probably", "maybe", "perhaps", "likely",
+    "seem", "seems", "appear", "appears", "happened",
+    "ways", "wrong", "important", "impact", "formation",
+    "piece", "thing", "things", "bad", "single", "feel", "feels",
+    "real", "best", "least", "full", "fact", "based",
+    "top", "high", "low", "big", "small", "whole",
+    "point", "case", "type", "step", "form",
+    "use", "used", "uses", "month", "months", "years",
+    "number", "example", "question", "answer", "idea",
+    "post", "blog", "article", "page", "site", "link",
 ]
 
 # ── Label templates by dominant pain type ────────────────────────────────────
@@ -177,7 +199,12 @@ def extract_signal_keywords(signals, max_features=200):
     if len(signals) < 2:
         return None, None
 
-    documents = [s["signal_text"] for s in signals]
+    # Combine post title (weighted 2x) with signal text so clustering
+    # groups by topic rather than just pain expression similarity
+    documents = [
+        "{t} {t} {s}".format(t=s.get("post_title", ""), s=s["signal_text"])
+        for s in signals
+    ]
     min_df = min(2, len(documents))
 
     # Combine sklearn's English stop words with pain-trigger vocabulary
@@ -339,7 +366,7 @@ def build_justification(idea):
     return " ".join(parts) if parts else "Potential opportunity identified from blog content."
 
 
-def cluster_signals(signals, vectorizer, matrix, similarity_threshold=0.3):
+def cluster_signals(signals, vectorizer, matrix, similarity_threshold=0.5):
     """Group related pain signals into coherent project idea themes.
 
     Uses agglomerative clustering on TF-IDF vectors of signal texts.
@@ -445,16 +472,82 @@ def _generate_label(keywords, pain_type_breakdown):
     return template.format(topic)
 
 
+def _extract_title_keywords(members, max_keywords=5, vocabulary=None):
+    """Extract meaningful keywords from post titles in a cluster.
+
+    Strategy:
+    1. Find words appearing in 2+ titles (cluster theme words).
+    2. If not enough, supplement from highest-impact member's title.
+    3. If a TF-IDF vocabulary is provided, prefer words that appear in the
+       broader corpus (filters out rare proper nouns and noise).
+
+    Args:
+        members: List of signal dicts from a cluster.
+        max_keywords: Maximum number of keywords to return.
+        vocabulary: Optional set of corpus-wide TF-IDF feature names.
+            Words in the vocabulary are preferred for relevance.
+
+    Returns:
+        List of keyword strings representing the cluster topic.
+    """
+    from sklearn.feature_extraction.text import ENGLISH_STOP_WORDS
+    combined_stop = set(ENGLISH_STOP_WORDS) | set(_PAIN_STOP_WORDS)
+
+    token_re = re.compile(r"\b[a-zA-Z][a-zA-Z0-9]{2,}\b")
+
+    # Collect document frequency across all titles
+    word_freq = defaultdict(int)
+    for m in members:
+        title = m.get("post_title", "")
+        tokens = token_re.findall(title.lower())
+        for t in set(tokens):
+            if t not in combined_stop:
+                word_freq[t] += 1
+
+    # Filter: prefer words in the corpus vocabulary (removes rare noise)
+    if vocabulary:
+        filtered = {w: c for w, c in word_freq.items() if w in vocabulary}
+        if filtered:
+            word_freq = filtered
+
+    # Start with words appearing in 2+ titles (cluster theme)
+    common = sorted(
+        [(w, c) for w, c in word_freq.items() if c >= 2],
+        key=lambda x: (-x[1], x[0]),
+    )
+    keywords = [w for w, c in common]
+
+    if len(keywords) >= max_keywords:
+        return keywords[:max_keywords]
+
+    # Supplement with keywords from the highest-impact member's title
+    sorted_members = sorted(
+        members, key=lambda m: m.get("impact_score", 0), reverse=True
+    )
+    used = set(keywords)
+    vocab_set = vocabulary or set()
+    for m in sorted_members:
+        title = m.get("post_title", "")
+        tokens = token_re.findall(title.lower())
+        for t in tokens:
+            if t not in combined_stop and t not in used:
+                # When vocabulary available, only use corpus-attested words
+                if vocab_set and t not in vocab_set:
+                    continue
+                keywords.append(t)
+                used.add(t)
+                if len(keywords) >= max_keywords:
+                    return keywords[:max_keywords]
+
+    return keywords[:max_keywords]
+
+
 def _make_idea(idea_id, members, feature_names, indices, matrix=None):
     """Build a single idea dict from a cluster of signals."""
-    # Determine top keywords from the cluster centroid
-    keywords = []
-    if matrix is not None and indices and feature_names:
-        cluster_vec = matrix[indices].mean(axis=0)
-        # cluster_vec may be a matrix (sparse); convert to array
-        arr = cluster_vec.A1 if hasattr(cluster_vec, "A1") else cluster_vec.flatten()
-        top_idx = arr.argsort()[::-1][:5]
-        keywords = [feature_names[i] for i in top_idx if arr[i] > 0]
+    # Extract keywords from post titles (more topical than signal text)
+    # Pass TF-IDF vocabulary as relevance filter for title words
+    vocab = set(feature_names) if feature_names else None
+    keywords = _extract_title_keywords(members, vocabulary=vocab)
 
     blog_names_seen = set()
     for m in members:
@@ -540,5 +633,10 @@ def generate_ideas(conn, max_features=500, period="month", top_n=20):
 
     # Step 5: cluster into ideas
     ideas = cluster_signals(signals, vectorizer, matrix)
+
+    # Filter out low-quality singleton ideas (single blog, single signal)
+    quality_ideas = [i for i in ideas if i["blog_count"] >= 2]
+    if quality_ideas:
+        ideas = quality_ideas
 
     return ideas[:top_n]

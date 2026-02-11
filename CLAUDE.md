@@ -15,7 +15,7 @@ hn-intel analyze              # Run analysis, print summary
 hn-intel ideas                # Surface project ideas from pain signals
 hn-intel report               # Run analysis + generate all reports to output/
 
-# Testing (104 tests, all use in-memory SQLite)
+# Testing (109 tests, all use in-memory SQLite)
 python -m pytest tests/ -v
 python -m pytest tests/test_analyzer.py -v                    # Single file
 python -m pytest tests/test_analyzer.py::test_compute_trends -v  # Single test
@@ -58,17 +58,19 @@ Both `analyzer.py` and `clusters.py` use the same vectorizer pattern:
 - `min_df=min(3, len(documents))` (adaptive for small corpora)
 - `ngram_range=(1, 2)`, `max_df=0.7`, `stop_words="english"`
 
-`ideas.py` uses a different stop words config: combines `ENGLISH_STOP_WORDS` with `_PAIN_STOP_WORDS` (70+ pain-trigger terms) to keep labels domain-focused.
+`ideas.py` uses a different stop words config: combines `ENGLISH_STOP_WORDS` with `_PAIN_STOP_WORDS` (120+ pain-trigger and filler terms) to keep labels domain-focused.
 
 ## Pain Signal Scoring (ideas.py)
 
-Composite score weights: trend momentum (0.35), authority/PageRank (0.25), breadth across blogs (0.25), recency (0.15). Six signal types: wish, frustration, gap, difficulty, broken, opportunity. Signals are clustered via `AgglomerativeClustering` on TF-IDF vectors with cosine distance.
+Composite score weights: trend momentum (0.35), authority/PageRank (0.25), breadth across blogs (0.25), recency (0.15). Six signal types: wish, frustration, gap, difficulty, broken, opportunity. Clustering uses title-weighted TF-IDF (title repeated 2x + signal text) with `AgglomerativeClustering` at cosine similarity threshold 0.5.
 
-**Label generation**: Labels are generated from a template-based system (`_LABEL_TEMPLATES`) that combines the dominant pain type with top TF-IDF domain keywords (max 3, title-cased). Templates map pain types to actionable phrases: wish→"Better {}", frustration→"Improved {}", gap→"{} Solution", difficulty→"Simplified {}", broken→"Reliable {}", opportunity→"{} Platform". Example output: "Simplified Database Migration" instead of raw keywords.
+**Label generation**: `_extract_title_keywords()` extracts keywords from post titles (not signal text) using a two-tier strategy: (1) words appearing in 2+ titles in the cluster (theme words), (2) fallback to highest-impact signal's title. Keywords are filtered against the corpus TF-IDF vocabulary to remove rare proper nouns. Labels use `_LABEL_TEMPLATES`: wish→"Better {}", frustration→"Improved {}", gap→"{} Solution", difficulty→"Simplified {}", broken→"Reliable {}", opportunity→"{} Platform".
 
-**Pain-trigger stop words**: `_PAIN_STOP_WORDS` list (70+ words like "wish", "frustrating", "broken", "opportunity") is combined with sklearn's English stop words in `extract_signal_keywords()` to prevent pain-trigger vocabulary from appearing in TF-IDF features and labels.
+**Pain-trigger stop words**: `_PAIN_STOP_WORDS` (120+ words: pain triggers, generic verbs, filler) combined with sklearn's English stop words in both `extract_signal_keywords()` and `_extract_title_keywords()`.
 
 **Signal deduplication**: `extract_pain_signals()` deduplicates by `(post_url, signal_type)`, keeping only the longest match per post+type pair. Different signal types from the same post are preserved.
+
+**Quality filtering**: `generate_ideas()` filters out ideas with `blog_count < 2` when multi-blog ideas exist, removing low-quality singletons.
 
 ## Gotchas
 
