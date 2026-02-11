@@ -131,6 +131,35 @@ def _extract_sentence(text, match_start, match_end):
     return text[start:end].strip()
 
 
+def _extract_context(text, match_start, match_end, max_sentences=3):
+    """Extract 2-3 sentences surrounding a regex match for richer context."""
+    sentences = list(_SENTENCE_RE.finditer(text))
+    for i, m in enumerate(sentences):
+        if m.start() <= match_start and m.end() >= match_end:
+            start_idx = max(0, i - 1)
+            end_idx = min(len(sentences), i + max_sentences - 1)
+            parts = [sentences[j].group().strip() for j in range(start_idx, end_idx)]
+            return " ".join(parts)
+    # Fallback: wider window
+    start = max(0, match_start - 150)
+    end = min(len(text), match_end + 150)
+    return text[start:end].strip()
+
+
+def _compute_location_hint(match_start, title_len, text_len):
+    """Return a location hint like 'in the title' or 'near the beginning'."""
+    if match_start < title_len:
+        return "in the title"
+    # Position within the description body (after title)
+    body_pos = (match_start - title_len) / max(text_len - title_len, 1)
+    if body_pos < 0.33:
+        return "near the beginning"
+    elif body_pos < 0.66:
+        return "midway through"
+    else:
+        return "near the end"
+
+
 # ── Public API ──────────────────────────────────────────────────────────────
 
 
@@ -144,7 +173,8 @@ def extract_pain_signals(conn):
 
     Returns:
         List of dicts, each with keys: post_id, blog_id, blog_name,
-        post_title, post_url, published, signal_text, signal_type.
+        post_title, post_url, published, signal_text, signal_type,
+        signal_context, signal_location.
     """
     posts = get_all_posts(conn)
     signals = []
@@ -155,6 +185,7 @@ def extract_pain_signals(conn):
         title = post["title"] or ""
         description = _strip_html(post["description"])
         full_text = title + ". " + description
+        title_len = len(title) + 2  # account for ". " separator
 
         for signal_type, pattern in _PAIN_PATTERNS.items():
             for match in pattern.finditer(full_text):
@@ -167,6 +198,12 @@ def extract_pain_signals(conn):
                     # Keep the longest match per post+type
                     if len(sentence) > len(seen[key]["signal_text"]):
                         seen[key]["signal_text"] = sentence
+                        seen[key]["signal_context"] = _extract_context(
+                            full_text, match.start(), match.end()
+                        )
+                        seen[key]["signal_location"] = _compute_location_hint(
+                            match.start(), title_len, len(full_text)
+                        )
                     continue
 
                 signal = {
@@ -178,6 +215,12 @@ def extract_pain_signals(conn):
                     "published": post["published"] or "",
                     "signal_text": sentence,
                     "signal_type": signal_type,
+                    "signal_context": _extract_context(
+                        full_text, match.start(), match.end()
+                    ),
+                    "signal_location": _compute_location_hint(
+                        match.start(), title_len, len(full_text)
+                    ),
                 }
                 seen[key] = signal
                 signals.append(signal)
@@ -570,6 +613,8 @@ def _make_idea(idea_id, members, feature_names, indices, matrix=None):
             "published": m["published"],
             "signal_text": m["signal_text"],
             "signal_type": m["signal_type"],
+            "signal_context": m.get("signal_context", ""),
+            "signal_location": m.get("signal_location", ""),
             "impact_score": m.get("impact_score", 0),
             "score_breakdown": m.get("score_breakdown", {}),
         }

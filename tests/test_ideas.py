@@ -17,6 +17,8 @@ from hn_intel.ideas import (
     generate_ideas,
     _generate_label,
     _extract_title_keywords,
+    _extract_context,
+    _compute_location_hint,
     _PAIN_STOP_WORDS,
 )
 from hn_intel.reports import generate_ideas_report
@@ -475,6 +477,8 @@ def test_ideas_report_creates_files():
         "sources": [
             {"blog_name": "A Blog", "post_title": "CI Woes", "post_url": "https://a.com/1",
              "published": "2024-05-01", "signal_text": "Flaky tests are painful.",
+             "signal_context": "We run CI daily. Flaky tests are painful. They waste hours.",
+             "signal_location": "near the beginning",
              "signal_type": "frustration", "impact_score": 0.8,
              "score_breakdown": {"trend": 0.3, "authority": 0.2, "breadth": 0.2, "recency": 0.1}},
         ],
@@ -502,11 +506,15 @@ def test_ideas_report_content():
             {"blog_name": "Alpha Blog", "post_title": "Observability",
              "post_url": "https://alpha.com/obs", "published": "2024-04-20",
              "signal_text": "No good way to correlate logs.",
+             "signal_context": "Logs are everywhere. No good way to correlate logs. This is a real problem.",
+             "signal_location": "near the beginning",
              "signal_type": "gap", "impact_score": 0.72,
              "score_breakdown": {"trend": 0.4, "authority": 0.2, "breadth": 0.1, "recency": 0.1}},
             {"blog_name": "Beta Blog", "post_title": "Logging Pain",
              "post_url": "https://beta.com/log", "published": "2024-05-01",
              "signal_text": "I wish there was a lightweight log tool.",
+             "signal_context": "Current tools are heavy. I wish there was a lightweight log tool. Something simple would help.",
+             "signal_location": "midway through",
              "signal_type": "wish", "impact_score": 0.65,
              "score_breakdown": {"trend": 0.3, "authority": 0.1, "breadth": 0.1, "recency": 0.15}},
         ],
@@ -521,8 +529,14 @@ def test_ideas_report_content():
         assert "Alpha Blog" in md
         assert "Beta Blog" in md
         assert "Justification" in md
-        assert "Sources" in md
-        assert "Key Quotes" in md
+        assert "Evidence" in md
+        # Post title should be a clickable link
+        assert "[Observability](https://alpha.com/obs)" in md
+        # Location hints present
+        assert "near the beginning" in md
+        assert "midway through" in md
+        # Context blockquote with bolded signal text
+        assert "**No good way to correlate logs.**" in md
 
         with open(json_path, encoding="utf-8") as f:
             data = json.load(f)
@@ -738,6 +752,124 @@ def test_generate_ideas_filters_singletons():
     if quality_ideas:
         for idea in quality_ideas:
             assert idea["blog_count"] >= 2
+
+
+# ── Context and location hint tests ──
+
+
+def test_extract_context_basic():
+    """Verify 2-3 sentences surrounding the match are returned."""
+    text = "First sentence. Second sentence with a pain point. Third sentence here. Fourth sentence."
+    # Match is within "Second sentence with a pain point."
+    match_start = text.index("pain point")
+    match_end = match_start + len("pain point")
+    context = _extract_context(text, match_start, match_end)
+    assert "First sentence" in context
+    assert "pain point" in context
+    # Should include sentence before and the match sentence (at least 2)
+    assert context.count(".") >= 1
+
+
+def test_extract_context_at_start():
+    """When match is in the first sentence, no prior sentence exists."""
+    text = "This is a pain point here. Second sentence. Third sentence."
+    match_start = text.index("pain point")
+    match_end = match_start + len("pain point")
+    context = _extract_context(text, match_start, match_end)
+    assert "pain point" in context
+
+
+def test_extract_context_fallback():
+    """When sentence boundaries aren't found, fallback to character window."""
+    text = "no punctuation here so this is a pain point somewhere in text"
+    match_start = text.index("pain point")
+    match_end = match_start + len("pain point")
+    context = _extract_context(text, match_start, match_end)
+    assert "pain point" in context
+
+
+def test_compute_location_hint():
+    """Verify location hints for different positions."""
+    assert _compute_location_hint(5, 20, 100) == "in the title"
+    assert _compute_location_hint(25, 20, 200) == "near the beginning"
+    assert _compute_location_hint(110, 20, 200) == "midway through"
+    assert _compute_location_hint(180, 20, 200) == "near the end"
+
+
+def test_compute_location_hint_edge_cases():
+    """Edge cases: match at title boundary, very short text."""
+    assert _compute_location_hint(0, 10, 10) == "in the title"
+    # When match_start == title_len, it's at body start (body_pos=0)
+    assert _compute_location_hint(10, 10, 10) == "near the beginning"
+
+
+def test_signal_has_context_and_location():
+    """Verify new fields exist in extract_pain_signals output."""
+    conn = _mem_db()
+    _seed_pain_posts(conn)
+    signals = extract_pain_signals(conn)
+
+    assert len(signals) > 0
+    for s in signals:
+        assert "signal_context" in s, f"Missing signal_context in signal: {s['post_url']}"
+        assert "signal_location" in s, f"Missing signal_location in signal: {s['post_url']}"
+        assert len(s["signal_context"]) >= len(s["signal_text"])
+        assert s["signal_location"] in (
+            "in the title", "near the beginning", "midway through", "near the end"
+        )
+    conn.close()
+
+
+def test_ideas_report_evidence_section():
+    """Verify the markdown report contains the new Evidence format."""
+    ideas = [{
+        "idea_id": 0,
+        "label": "Test Idea",
+        "impact_score": 0.5,
+        "justification": "Test justification.",
+        "keywords": ["test"],
+        "signal_count": 2,
+        "blog_count": 2,
+        "pain_type_breakdown": {"wish": 1, "gap": 1},
+        "representative_quote": "I wish there was a better tool.",
+        "sources": [
+            {"blog_name": "Blog A", "post_title": "Post Alpha",
+             "post_url": "https://a.com/alpha", "published": "2024-06-01",
+             "signal_text": "I wish there was a better tool.",
+             "signal_context": "Current tools are bad. I wish there was a better tool. Something modern.",
+             "signal_location": "near the beginning",
+             "signal_type": "wish", "impact_score": 0.5,
+             "score_breakdown": {"trend": 0.2, "authority": 0.1, "breadth": 0.1, "recency": 0.1}},
+            {"blog_name": "Blog B", "post_title": "Post Beta",
+             "post_url": "https://b.com/beta", "published": "2024-06-02",
+             "signal_text": "No good way to handle this.",
+             "signal_context": "We tried everything. No good way to handle this. Very frustrating.",
+             "signal_location": "midway through",
+             "signal_type": "gap", "impact_score": 0.45,
+             "score_breakdown": {"trend": 0.1, "authority": 0.1, "breadth": 0.1, "recency": 0.15}},
+        ],
+    }]
+    with tempfile.TemporaryDirectory() as tmpdir:
+        md_path, _ = generate_ideas_report(ideas, tmpdir)
+        with open(md_path, encoding="utf-8") as f:
+            md = f.read()
+
+        # Evidence section header
+        assert "### Evidence" in md
+        # Post title as clickable link
+        assert "[Post Alpha](https://a.com/alpha)" in md
+        assert "[Post Beta](https://b.com/beta)" in md
+        # Blog name after title
+        assert "Blog A" in md
+        assert "Blog B" in md
+        # Location hints
+        assert "**Found**: near the beginning" in md
+        assert "**Found**: midway through" in md
+        # Context blockquote with bolded signal
+        assert "**I wish there was a better tool.**" in md
+        assert "**No good way to handle this.**" in md
+        # Old format should NOT be present
+        assert "Key Quotes" not in md
 
 
 # ── CLI tests ──

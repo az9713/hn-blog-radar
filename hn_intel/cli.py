@@ -128,9 +128,17 @@ def ideas(max_features, top_n, period, output_dir):
         if idea.get("representative_quote"):
             quote = idea["representative_quote"][:100]
             click.echo(f"     \"{quote}...\"")
-        # Show source blogs
-        blog_names = list(dict.fromkeys(s["blog_name"] for s in idea["sources"]))
-        click.echo(f"     Sources: {', '.join(blog_names[:5])}")
+        # Show source blogs with post URLs (up to 3 unique blog+URL pairs)
+        seen_urls = set()
+        source_lines = []
+        for s in idea["sources"]:
+            key = (s["blog_name"], s["post_url"])
+            if key not in seen_urls and len(source_lines) < 3:
+                seen_urls.add(key)
+                source_lines.append(f"       - {s['blog_name']}: {s['post_url']}")
+        click.echo("     Sources:")
+        for line in source_lines:
+            click.echo(line)
         click.echo("")
 
     if output_dir:

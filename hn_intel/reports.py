@@ -367,32 +367,34 @@ def generate_ideas_report(ideas, output_dir):
                 lines.append(idea["justification"])
                 lines.append("")
 
-            # Sources table
+            # Evidence section (replaces old Sources table + Key Quotes)
             sources = idea.get("sources", [])
             if sources:
-                lines.append("### Sources\n")
-                table_data = [
-                    [
-                        f"[{s['blog_name']}]({s['post_url']})",
-                        s["post_title"],
-                        s["published"][:10] if s["published"] else "N/A",
-                        s["signal_type"],
-                    ]
-                    for s in sources
-                ]
-                lines.append(tabulate(
-                    table_data,
-                    headers=["Blog", "Post", "Date", "Pain Type"],
-                    tablefmt="github",
-                ))
-                lines.append("")
+                lines.append("### Evidence\n")
+                for s in sources[:5]:
+                    post_date = s["published"][:10] if s["published"] else "N/A"
+                    location = s.get("signal_location", "")
+                    lines.append(
+                        f"#### [{s['post_title']}]({s['post_url']}) — {s['blog_name']}"
+                    )
+                    location_part = f" | **Found**: {location}" if location else ""
+                    lines.append(
+                        f"**Pain type**: {s['signal_type']} "
+                        f"| **Date**: {post_date}"
+                        f"{location_part}"
+                    )
+                    lines.append("")
 
-            # Key quotes
-            quotes = [s for s in sources if s.get("signal_text")][:3]
-            if quotes:
-                lines.append("### Key Quotes\n")
-                for q in quotes:
-                    lines.append(f"> \"{q['signal_text']}\" — **{q['blog_name']}**\n")
+                    # Context blockquote with the signal sentence bolded
+                    context = s.get("signal_context", "")
+                    signal_text = s.get("signal_text", "")
+                    if context and signal_text:
+                        bolded = context.replace(signal_text, f"**{signal_text}**")
+                        lines.append(f"> {bolded}")
+                    elif signal_text:
+                        lines.append(f"> **{signal_text}**")
+                    lines.append("")
+
                 lines.append("")
 
             lines.append("---\n")
